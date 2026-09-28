@@ -128,9 +128,12 @@ def read_source(source: Path) -> tuple[list[dict[str, str]], dict]:
                 f"{variant} text cardinality mismatch: {unique_texts} != {expected['text']}"
             )
         counts = Counter(ids)
-        repeated_variant_id_first_ordinal[variant] = next(
-            i for i, value in enumerate(ids, start=1) if counts[value] > 1
+        repeated = next(
+            (i for i, value in enumerate(ids, start=1) if counts[value] > 1),
+            None,
         )
+        if repeated is not None:
+            repeated_variant_id_first_ordinal[variant] = repeated
         variant_counts[variant] = {
             "unique_ids": unique_ids,
             "unique_texts": unique_texts,
