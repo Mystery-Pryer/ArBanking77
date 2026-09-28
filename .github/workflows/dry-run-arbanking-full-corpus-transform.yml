@@ -1,0 +1,60 @@
+name: 9B ArBanking Full Corpus Transform Dry Run
+
+on:
+  push:
+    branches:
+      - feat/checkpoint-9b-arbanking-full-corpus-dry-run
+    paths:
+      - "scripts/processing/transform_arbanking_full_corpus_subset.py"
+      - ".github/workflows/dry-run-arbanking-full-corpus-transform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned transform dependency
+        run: python -m pip install --disable-pip-version-check pyarrow==21.0.0
+
+      - name: Transform bounded full-corpus variant subset and validate
+        run: |
+          python scripts/processing/transform_arbanking_full_corpus_subset.py \
+            --source data/Banking77_full_corpus.csv \
+            --output-parquet "$RUNNER_TEMP/arbanking-full-corpus-dry-run.parquet" \
+            --manifest "$RUNNER_TEMP/arbanking-full-corpus-dry-run-manifest.json"
+
+      - name: Ensure manifest contains no source payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/arbanking-full-corpus-dry-run-manifest.json"
+          python -m json.tool "$manifest" > /dev/null
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ["RUNNER_TEMP"]) / "arbanking-full-corpus-dry-run-manifest.json"
+          m = json.loads(p.read_text(encoding="utf-8"))
+          assert m["raw_source_text_emitted_in_manifest"] is False
+          assert m["raw_source_label_values_emitted_in_manifest"] is False
+          assert m["full_source_row_count_verified"] == 13075
+          assert m["full_expected_canonical_rows_verified"] == 52300
+          PY
+
+      - name: Upload validation manifest only
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbanking-full-corpus-dry-run-manifest
+          path: ${{ runner.temp }}/arbanking-full-corpus-dry-run-manifest.json
+          if-no-files-found: error
+          retention-days: 14
