@@ -1,0 +1,5 @@
+lineage_id,from_type,from_id,relation,to_type,to_id,transformation_id,run_id,notes
+LIN-000001,snapshot,SNP-000009,subset_of,snapshot,SNP-000008,,,Partial Git mirror vs full corpus.
+LIN-000002,snapshot,SNP-000023,sample_of,snapshot,SNP-000022,,,Preview vs full product.
+LIN-000003,snapshot,SNP-000091,sample_of,snapshot,SNP-000033,,,Public samples vs full EAC.
+LIN-000004,snapshot,SNP-000092,sample_of,snapshot,SNP-000036,,,Public sample vs full EMALAC.
