@@ -30,6 +30,53 @@ jobs:
         run: |
           test "$(git hash-object data/Banking77_full_corpus.csv)" = "3434fe0f9ef7d4797e40840b0ef1b4862ffcb08b"
 
+      - name: Audit aggregate source counts
+        run: |
+          python - <<'PY'
+          import csv, hashlib, json
+          from pathlib import Path
+
+          p = Path("data/Banking77_full_corpus.csv")
+          fields = [
+              "Intent_ID","Intent_en","Intent_ar","QID","Question_en",
+              "QuestionID_MSA1","Question_MSA1","QuestionID_MSA2","Question_MSA2",
+              "QuestionID_PAL1","Question_PAL1","QuestionID_PAL2","Question_PAL2"
+          ]
+          rows = []
+          extras = 0
+          with p.open("r", encoding="utf-8-sig", newline="") as f:
+              rd = csv.DictReader(f)
+              assert rd.fieldnames == fields, rd.fieldnames
+              for row in rd:
+                  if None in row:
+                      extras += 1
+                  rows.append(row)
+
+          qids = [row["QID"] for row in rows]
+          result = {
+              "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+              "bytes": p.stat().st_size,
+              "rows": len(rows),
+              "exact_unique_rows": len({
+                  tuple(row.get(k) for k in fields) for row in rows
+              }),
+              "rows_with_extra_columns": extras,
+              "unique": {
+                  k: len({row.get(k) for row in rows}) for k in fields
+              },
+              "blank_counts": {
+                  k: sum(1 for row in rows if row.get(k) in (None, ""))
+                  for k in fields
+              },
+              "qid_duplicate_excess": len(qids) - len(set(qids)),
+              "qid_min": min(map(int, qids)),
+              "qid_max": max(map(int, qids)),
+          }
+          print("SOURCE_AUDIT_JSON=" + json.dumps(
+              result, ensure_ascii=False, sort_keys=True
+          ))
+          PY
+
       - name: Execute and validate 52300-row full-corpus transform
         run: |
           python scripts/processing/transform_arbanking_full_corpus.py \
