@@ -47,9 +47,10 @@ jobs:
           m = json.loads(p.read_text(encoding="utf-8"))
           assert m["raw_source_text_emitted_in_manifest"] is False
           assert m["raw_source_label_values_emitted_in_manifest"] is False
-          assert m["full_source_row_count_verified"] == 13075
+          assert m["full_source_row_count_verified"] == 13083
           assert m["full_expected_canonical_rows_verified"] == 52332
           PY
+          cat "$manifest"
 
       - name: Upload validation manifest only
         uses: actions/upload-artifact@v4
