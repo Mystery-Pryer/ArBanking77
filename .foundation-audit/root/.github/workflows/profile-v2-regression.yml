@@ -1,0 +1,92 @@
+name: Profile V2 Regression
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "quality/profile_v2/**"
+      - "scripts/profiling/**"
+      - "scripts/analysis/**"
+      - "scripts/validation/validate_profile_v2_*.py"
+      - "tests/test_profile_v2_*.py"
+      - "control/registry/profiles.csv"
+      - "control/registry/resources.csv"
+      - "control/registry/snapshots.csv"
+      - "control/registry/rights.csv"
+      - "control/registry/lineage.csv"
+      - "control/registry/snapshot_artifacts.csv"
+
+concurrency:
+  group: profile-v2-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate Profile V2 pilot bundle
+        run: |
+          python scripts/profiling/generate_profile_v2_pilot.py \
+            --output /tmp/profile-v2-pilot-bundle.json
+
+      - name: Validate Profile V2 pilot bundle
+        run: |
+          python scripts/validation/validate_profile_v2_pilot.py \
+            --bundle /tmp/profile-v2-pilot-bundle.json
+
+      - name: Generate Profile V2 collection rollout
+        run: |
+          mkdir -p /tmp/profile-v2-collection
+          python scripts/profiling/generate_profile_v2_collection.py \
+            --pilot-bundle /tmp/profile-v2-pilot-bundle.json \
+            --output /tmp/profile-v2-collection/collection_bundle.json \
+            --scan-queue /tmp/profile-v2-collection/scan_queue.csv
+
+      - name: Validate Profile V2 collection rollout
+        run: |
+          python scripts/validation/validate_profile_v2_collection.py \
+            --bundle /tmp/profile-v2-collection/collection_bundle.json \
+            --scan-queue /tmp/profile-v2-collection/scan_queue.csv
+
+      - name: Generate Profile V2 collection analysis
+        run: |
+          mkdir -p /tmp/profile-v2-analysis
+          python scripts/analysis/generate_profile_v2_collection_analysis.py \
+            --collection-bundle /tmp/profile-v2-collection/collection_bundle.json \
+            --output-dir /tmp/profile-v2-analysis
+
+      - name: Validate Profile V2 collection analysis
+        run: |
+          python scripts/validation/validate_profile_v2_collection_analysis.py \
+            --output-dir /tmp/profile-v2-analysis
+
+      - name: Run Profile V2 tests
+        run: |
+          python -m unittest discover \
+            -s tests \
+            -p "test_profile_v2_*.py" \
+            -v
+
+      - name: Upload regression evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-v2-regression
+          path: |
+            /tmp/profile-v2-pilot-bundle.json
+            /tmp/profile-v2-collection/
+            /tmp/profile-v2-analysis/
+          if-no-files-found: error
+          retention-days: 14
