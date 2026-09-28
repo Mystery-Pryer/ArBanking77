@@ -53,10 +53,20 @@ jobs:
                   rows.append(row)
 
           qids = [row["QID"] for row in rows]
+          malformed = [
+              {
+                  "physical_record_ordinal": i,
+                  "qid": row.get("QID"),
+                  "extra_column_count": len(row.get(None) or []),
+              }
+              for i, row in enumerate(rows, start=1)
+              if None in row
+          ]
           result = {
               "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
               "bytes": p.stat().st_size,
               "rows": len(rows),
+              "malformed_records": malformed,
               "exact_unique_rows": len({
                   tuple(row.get(k) for k in fields) for row in rows
               }),
