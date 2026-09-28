@@ -1,0 +1,55 @@
+name: 9A ArBanking Full Deterministic Ingestion
+
+on:
+  push:
+    branches:
+      - feat/checkpoint-9a-arbanking-full-ingestion
+    paths:
+      - "scripts/processing/transform_arbanking_intent_full.py"
+      - ".github/workflows/full-arbanking-intent-ingestion.yml"
+      - "data/Banking77_Arabized_Saudi_test.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-ingestion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned transform dependency
+        run: python -m pip install --disable-pip-version-check pyarrow==21.0.0
+
+      - name: Transform all 3,580 ArBanking Saudi rows and validate
+        run: |
+          python scripts/processing/transform_arbanking_intent_full.py \
+            --source data/Banking77_Arabized_Saudi_test.csv \
+            --output-parquet "$RUNNER_TEMP/arbanking_saudi_intent_utterances.parquet" \
+            --manifest "$RUNNER_TEMP/arbanking_saudi_full_manifest.json"
+
+      - name: Enforce payload-free manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("/home/runner/work/_temp/arbanking_saudi_full_manifest.json")
+          obj = json.loads(p.read_text(encoding="utf-8"))
+          assert obj["canonical_row_count"] == 3580
+          assert obj["output_duplicate_group_count"] == 34
+          assert obj["output_duplicate_excess_row_count"] == 35
+          assert obj["raw_source_text_emitted_in_manifest"] is False
+          assert obj["raw_source_label_values_emitted_in_manifest"] is False
+          PY
+
+      - name: Upload validation manifest only
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbanking-full-ingestion-manifest
+          path: ${{ runner.temp }}/arbanking_saudi_full_manifest.json
+          retention-days: 14
