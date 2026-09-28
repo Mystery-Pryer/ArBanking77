@@ -1,0 +1,77 @@
+name: 9B ArBanking Full Corpus Encrypted Handoff
+
+on:
+  push:
+    branches:
+      - feat/checkpoint-9b-arbanking-full-corpus
+    paths:
+      - scripts/processing/transform_arbanking_full_corpus.py
+      - ci/arbanking9b_public.pem
+      - .github/workflows/checkpoint-9b-arbanking-full-corpus.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-ingestion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned transform dependency
+        run: python -m pip install --disable-pip-version-check pyarrow==21.0.0
+
+      - name: Verify exact source Git blob
+        run: |
+          test "$(git hash-object data/Banking77_full_corpus.csv)" = "3434fe0f9ef7d4797e40840b0ef1b4862ffcb08b"
+
+      - name: Execute and validate 52300-row full-corpus transform
+        run: |
+          python scripts/processing/transform_arbanking_full_corpus.py \
+            --source "data/Banking77_full_corpus.csv" \
+            --output-parquet "$RUNNER_TEMP/arbanking77_full_corpus_intent_utterances.parquet" \
+            --manifest "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json"
+          python -m json.tool "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json" >/dev/null
+          test -s "$RUNNER_TEMP/arbanking77_full_corpus_intent_utterances.parquet"
+
+      - name: Enforce payload-free manifest
+        run: |
+          ! grep -q '"raw_text"' "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json"
+          ! grep -q '"english_translation"' "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json"
+          ! grep -q '"source_intent_en"' "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json"
+          ! grep -q '"source_intent_ar"' "$RUNNER_TEMP/arbanking77_full_corpus_manifest.json"
+
+      - name: Encrypt canonical Parquet for private handoff
+        run: |
+          openssl rand -out "$RUNNER_TEMP/aes_key.bin" 32
+          openssl rand -out "$RUNNER_TEMP/aes_iv.bin" 16
+          KEY_HEX="$(xxd -p -c 256 "$RUNNER_TEMP/aes_key.bin")"
+          IV_HEX="$(xxd -p -c 256 "$RUNNER_TEMP/aes_iv.bin")"
+          openssl enc -aes-256-cbc -K "$KEY_HEX" -iv "$IV_HEX" \
+            -in "$RUNNER_TEMP/arbanking77_full_corpus_intent_utterances.parquet" \
+            -out "$RUNNER_TEMP/arbanking77_full_corpus_intent_utterances.parquet.enc"
+          cat "$RUNNER_TEMP/aes_key.bin" "$RUNNER_TEMP/aes_iv.bin" > "$RUNNER_TEMP/envelope.bin"
+          openssl pkeyutl -encrypt -pubin \
+            -inkey ci/arbanking9b_public.pem \
+            -in "$RUNNER_TEMP/envelope.bin" \
+            -out "$RUNNER_TEMP/envelope.bin.enc" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256
+          rm -f "$RUNNER_TEMP/arbanking77_full_corpus_intent_utterances.parquet" \
+                "$RUNNER_TEMP/aes_key.bin" "$RUNNER_TEMP/aes_iv.bin" "$RUNNER_TEMP/envelope.bin"
+
+      - name: Upload encrypted canonical handoff and payload-free manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbanking77-full-corpus-encrypted-handoff
+          path: |
+            ${{ runner.temp }}/arbanking77_full_corpus_intent_utterances.parquet.enc
+            ${{ runner.temp }}/envelope.bin.enc
+            ${{ runner.temp }}/arbanking77_full_corpus_manifest.json
+          retention-days: 1
+          if-no-files-found: error
