@@ -1,0 +1,86 @@
+name: Repository Quality
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [main]
+
+concurrency:
+  group: repository-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile implementation scripts
+        run: |
+          python -m py_compile scripts/migration/migrate_legacy_control_plane.py
+          python -m py_compile scripts/validation/validate_control_plane.py
+          python -m py_compile scripts/validation/validate_repository.py
+          python -m py_compile scripts/validation/validate_relocation.py
+          python -m py_compile scripts/validation/validate_workflow_guardrails.py
+          python -m py_compile scripts/validation/validate_framework_consistency.py
+          python -m py_compile scripts/validation/validate_profile_v2_contracts.py
+          python -m py_compile scripts/validation/validate_profile_v2_pilot.py
+          python -m py_compile scripts/validation/validate_profile_v2_collection.py
+          python -m py_compile scripts/validation/validate_profile_v2_collection_analysis.py
+          python -m py_compile scripts/analysis/generate_profile_v2_collection_analysis.py
+          python -m py_compile scripts/profiling/profile_v2_carry_forward.py
+          python -m py_compile scripts/profiling/generate_profile_v2_pilot.py
+          python -m py_compile scripts/profiling/generate_profile_v2_collection.py
+          python -m py_compile .github/afr-bridge/bridge.py
+
+      - name: Validate workflow guardrails
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/validation/validate_workflow_guardrails.py
+
+      - name: Validate AFR Bridge protocol
+        run: |
+          python .github/afr-bridge/bridge.py validate-protocol --role foundation
+          python .github/afr-bridge/bridge.py self-test
+
+      - name: Validate Foundation repository
+        run: python scripts/validation/validate_repository.py
+
+      - name: Validate Profile V2 contracts
+        run: python scripts/validation/validate_profile_v2_contracts.py
+
+      - name: Audit V1 to V2 carry-forward
+        run: |
+          python scripts/profiling/profile_v2_carry_forward.py \
+            --audit-registry
+
+
+      - name: Run Profile V2 tests
+        run: |
+          python -m unittest discover \
+            -s tests \
+            -p "test_profile_v2_*.py" \
+            -v
+
+
+      - name: Validate migration baseline when active
+        shell: bash
+        run: |
+          if grep -Eq 'Foundation phase: MIGRATION_ACTIVE' STATE.md && [ -f quality/migration/MIGRATION_SUMMARY.json ]; then
+            python scripts/validation/validate_control_plane.py --expect-baseline
+          else
+            echo "Migration baseline gate not applicable."
+          fi
