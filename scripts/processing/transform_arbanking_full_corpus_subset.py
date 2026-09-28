@@ -34,7 +34,7 @@ EXPECTED_VARIANT_UNIQUES = {
     "MSA1": {"id": 13_083, "text": 13_083},
     "MSA2": {"id": 2_461, "text": 2_456},
     "PAL1": {"id": 13_074, "text": 13_083},
-    "PAL2": {"id": 2_792, "text": 2_787),
+    "PAL2": {"id": 2_792, "text": 2_787},
 }
 FIELDS = [
     "Intent_ID",
