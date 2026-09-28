@@ -1,0 +1,37 @@
+name: 9B ArBanking Full Source Identity Probe
+
+on:
+  push:
+    branches:
+      - feat/checkpoint-9b-arbanking-full-corpus-dry-run
+    paths:
+      - ".github/workflows/probe-arbanking-full-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify full-corpus bytes and compute SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_path="data/Banking77_full_corpus.csv"
+          bytes="$(wc -c < "$source_path" | tr -d '[:space:]')"
+          test "$bytes" = "4972258"
+          sha="$(sha256sum "$source_path" | awk '{print $1}')"
+          printf '{"checkpoint":"9B-source-identity","source_object":"Banking77_full_corpus.csv","source_git_blob_sha":"3434fe0f9ef7d4797e40840b0ef1b4862ffcb08b","source_bytes":%s,"source_sha256":"%s","raw_source_text_emitted":false}\n' "$bytes" "$sha" > "$RUNNER_TEMP/arbanking-full-source-identity.json"
+          python -m json.tool "$RUNNER_TEMP/arbanking-full-source-identity.json"
+
+      - name: Upload source identity manifest only
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbanking-full-source-identity
+          path: ${{ runner.temp }}/arbanking-full-source-identity.json
+          if-no-files-found: error
+          retention-days: 14
