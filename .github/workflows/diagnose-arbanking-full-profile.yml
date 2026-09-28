@@ -1,0 +1,74 @@
+name: 9B ArBanking Full Profile Diagnostic
+
+on:
+  push:
+    branches:
+      - feat/checkpoint-9b-arbanking-full-corpus-dry-run
+    paths:
+      - ".github/workflows/diagnose-arbanking-full-profile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute aggregate source profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import hashlib
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          p = Path("data/Banking77_full_corpus.csv")
+          h = hashlib.sha256(p.read_bytes()).hexdigest()
+          with p.open("r", encoding="utf-8-sig", newline="") as f:
+              reader = csv.DictReader(f)
+              rows = list(reader)
+
+          fields = reader.fieldnames
+          stats = {}
+          for field in fields:
+              values = [row[field] for row in rows]
+              stats[field] = {
+                  "null_or_blank_count": sum(v is None or v == "" for v in values),
+                  "unique_count": len(set(values)),
+              }
+
+          qids = [row["QID"] for row in rows]
+          exact_rows = [tuple(row[field] for field in fields) for row in rows]
+          report = {
+              "checkpoint": "9B-profile-diagnostic",
+              "source_object": p.name,
+              "source_bytes": p.stat().st_size,
+              "source_sha256": h,
+              "csv_row_count": len(rows),
+              "field_count": len(fields),
+              "fields": fields,
+              "field_stats": stats,
+              "unique_qids": len(set(qids)),
+              "duplicate_qid_groups": sum(1 for n in Counter(qids).values() if n > 1),
+              "exact_unique_rows": len(set(exact_rows)),
+              "exact_duplicate_excess_rows": len(rows) - len(set(exact_rows)),
+              "raw_source_text_emitted": False,
+          }
+          out = Path(__import__("os").environ["RUNNER_TEMP"]) / "arbanking-full-profile-diagnostic.json"
+          out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload aggregate diagnostic only
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbanking-full-profile-diagnostic
+          path: ${{ runner.temp }}/arbanking-full-profile-diagnostic.json
+          if-no-files-found: error
+          retention-days: 14
