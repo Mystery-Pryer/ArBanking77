@@ -24,8 +24,20 @@ RESOURCE_ID = "RES-000008"
 ARTIFACT_ID = "ART-000427"
 SOURCE_OBJECT = "Banking77_full_corpus.csv"
 EXPECTED_BYTES = 4_972_258
-EXPECTED_SOURCE_ROWS = 13_075
+EXPECTED_SHA256 = "38863ae4093840f2418d76613d0c2134295fc78f1116361fa9ff00680b1309c1"
+EXPECTED_PHYSICAL_ROWS = 13_083
+EXPECTED_CLEAN_ROWS = 13_075
 EXPECTED_OUTPUT_ROWS = 52_300
+EXPECTED_QUARANTINED = (
+    (855, "855", 2),
+    (930, "930", 1),
+    (2736, "2736", 2),
+    (6707, "6707", 1),
+    (6712, "6712", 1),
+    (8271, "8271", 1),
+    (9466, "9466", 1),
+    (9483, "9483", 1),
+)
 EXPECTED_UNIQUE_INTENTS = 77
 EXPECTED_VARIANT_ID_UNIQUES = {
     "MSA1": 13_075,
@@ -86,9 +98,15 @@ def read_source(source: Path) -> tuple[list[dict], dict]:
             f"source byte-size mismatch: {source_bytes} != {EXPECTED_BYTES}"
         )
     source_sha = sha256_file(source)
+    if source_sha != EXPECTED_SHA256:
+        raise RuntimeError(
+            f"source sha256 mismatch: {source_sha} != {EXPECTED_SHA256}"
+        )
 
     rows: list[dict] = []
     qids: list[int] = []
+    physical_records = 0
+    quarantined: list[dict] = []
     full_source_rows: list[tuple[str, ...]] = []
     intent_ids: set[int] = set()
     intent_en: set[str] = set()
@@ -106,6 +124,19 @@ def read_source(source: Path) -> tuple[list[dict], dict]:
             )
 
         for source_ordinal, row in enumerate(reader, start=1):
+            physical_records += 1
+            if None in row:
+                quarantined.append(
+                    {
+                        "physical_record_ordinal": source_ordinal,
+                        "qid": row.get("QID"),
+                        "extra_column_count": len(row.get(None) or []),
+                        "status": "FAILED_EXTRACTION",
+                        "reason": "EXTRA_UNNAMED_CSV_COLUMNS",
+                    }
+                )
+                continue
+
             for field in SOURCE_FIELDS:
                 value = row.get(field)
                 if value is None or value == "":
@@ -162,13 +193,30 @@ def read_source(source: Path) -> tuple[list[dict], dict]:
                     }
                 )
 
-    if len(qids) != EXPECTED_SOURCE_ROWS:
+    if physical_records != EXPECTED_PHYSICAL_ROWS:
         raise RuntimeError(
-            f"source row count mismatch: {len(qids)} != {EXPECTED_SOURCE_ROWS}"
+            "physical source record count mismatch: "
+            f"{physical_records} != {EXPECTED_PHYSICAL_ROWS}"
         )
-    if len(set(qids)) != EXPECTED_SOURCE_ROWS:
+    observed_quarantine = tuple(
+        (
+            item["physical_record_ordinal"],
+            item["qid"],
+            item["extra_column_count"],
+        )
+        for item in quarantined
+    )
+    if observed_quarantine != EXPECTED_QUARANTINED:
+        raise RuntimeError(
+            f"quarantine structure mismatch: {observed_quarantine!r}"
+        )
+    if len(qids) != EXPECTED_CLEAN_ROWS:
+        raise RuntimeError(
+            f"clean source row count mismatch: {len(qids)} != {EXPECTED_CLEAN_ROWS}"
+        )
+    if len(set(qids)) != EXPECTED_CLEAN_ROWS:
         raise RuntimeError("QID is not unique across source rows")
-    if len(set(full_source_rows)) != EXPECTED_SOURCE_ROWS:
+    if len(set(full_source_rows)) != EXPECTED_CLEAN_ROWS:
         raise RuntimeError("exact duplicate source bundle rows detected")
     if len(intent_ids) != EXPECTED_UNIQUE_INTENTS:
         raise RuntimeError(
@@ -184,7 +232,7 @@ def read_source(source: Path) -> tuple[list[dict], dict]:
             f"output expansion mismatch: {len(rows)} != {EXPECTED_OUTPUT_ROWS}"
         )
     if dict(variant_row_counts) != {
-        variant: EXPECTED_SOURCE_ROWS for variant, _, _ in VARIANTS
+        variant: EXPECTED_CLEAN_ROWS for variant, _, _ in VARIANTS
     }:
         raise RuntimeError(
             f"variant row accounting mismatch: {dict(variant_row_counts)}"
@@ -202,7 +250,10 @@ def read_source(source: Path) -> tuple[list[dict], dict]:
     return rows, {
         "source_sha256": source_sha,
         "source_bytes": source_bytes,
-        "source_row_count": len(qids),
+        "source_physical_record_count": physical_records,
+        "source_clean_row_count": len(qids),
+        "source_quarantined_record_count": len(quarantined),
+        "quarantined_records": quarantined,
         "source_unique_qids": len(set(qids)),
         "source_unique_intent_ids": len(intent_ids),
         "source_unique_intent_en": len(intent_en),
@@ -266,7 +317,7 @@ def validate(rows: list[dict], output: Path, source_meta: dict) -> dict:
 
     output_variant_counts = Counter(row["source_variant"] for row in out)
     expected_variant_counts = {
-        variant: EXPECTED_SOURCE_ROWS for variant, _, _ in VARIANTS
+        variant: EXPECTED_CLEAN_ROWS for variant, _, _ in VARIANTS
     }
     if dict(output_variant_counts) != expected_variant_counts:
         raise RuntimeError(
@@ -345,7 +396,10 @@ def validate(rows: list[dict], output: Path, source_meta: dict) -> dict:
         "source_snapshot": SNAPSHOT_ID,
         "record_family": "intent_utterance",
         "ingestion_mode": "full_deterministic_one_to_many",
-        "source_bundle_count": source_meta["source_row_count"],
+        "source_physical_record_count": source_meta["source_physical_record_count"],
+        "source_clean_bundle_count": source_meta["source_clean_row_count"],
+        "failed_extraction_count": source_meta["source_quarantined_record_count"],
+        "failed_extractions": source_meta["quarantined_records"],
         "canonical_row_count": len(out),
         "source_unique_qids": source_meta["source_unique_qids"],
         "source_unique_intent_ids": source_meta["source_unique_intent_ids"],
@@ -394,7 +448,9 @@ def validate(rows: list[dict], output: Path, source_meta: dict) -> dict:
         "compression": "zstd",
         "checks": {
             "schema_readable": True,
-            "full_source_bundle_accounting": True,
+            "full_physical_source_accounting": True,
+            "malformed_rows_quarantined": True,
+            "clean_source_bundle_accounting": True,
             "four_way_variant_expansion": True,
             "stable_unique_record_ids": True,
             "source_provenance": True,
